@@ -1,0 +1,41 @@
+body {
+    margin: 0;
+    font-family: 'Roboto', sans-serif;
+}
+
+nav {
+    float: right;
+    margin-top: 45px
+}
+
+nav a {
+    color: #eeee22;
+    padding: 10px
+}
+
+nav a:hover {
+    background: rgba(0, 0, 0, 0.2)
+}
+
+main,
+.centered-container {
+    max-width: 800px;
+    margin: 0 auto
+}
+
+header {
+    background: #565656;
+    border-bottom: 4px solid #eeee22
+}
+
+header img {
+    margin: 5px
+}
+
+footer {
+    background: #565656;
+    color: #eeee22;
+    border-top: 2px solid #eeee22;
+    margin-top: 100px;
+    padding: 20px 0
+}

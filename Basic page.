@@ -9,3 +9,6 @@
     <title>Steel_ghost ONLINE</title>
     <link href="styles.css" rel="stylesheet">
 </head>
+<body>
+<h1>Hello World</h1>
+</body>
