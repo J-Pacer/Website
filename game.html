@@ -1,0 +1,301 @@
+<html><head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script>
+    // Create a scene, a camera, and a renderer
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    var renderer = new THREE.WebGLRenderer({canvas: canvas});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    // Create a ray tracing shader material
+    var rayTracingMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: {value: 0},
+        resolution: {value: new THREE.Vector2(window.innerWidth, window.innerHeight)},
+        cameraPosition: {value: camera.position},
+        cameraDirection: {value: camera.getWorldDirection(new THREE.Vector3())}
+      },
+      vertexShader: `
+        void main() {
+          gl_Position = vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform vec2 resolution;
+        uniform vec3 cameraPosition;
+        uniform vec3 cameraDirection;
+
+        // A function to generate a random number between 0 and 1
+        float random(vec2 st) {
+          return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+        }
+
+        // A function to generate a random direction vector
+        vec3 randomDirection(vec2 st) {
+          float theta = random(st) * 6.283185;
+          float phi = acos(random(st + vec2(1.0, 0.0)) * 2.0 - 1.0);
+          return vec3(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
+        }
+
+        // A function to calculate the distance from a point to a sphere
+        float sphereDistance(vec3 p, vec3 c, float r) {
+          return length(p - c) - r;
+        }
+
+        // A function to calculate the distance from a point to a plane
+        float planeDistance(vec3 p, vec3 n, float d) {
+          return dot(p, n) + d;
+        }
+
+        // A function to calculate the distance from a point to a box
+        float boxDistance(vec3 p, vec3 b) {
+          vec3 d = abs(p) - b;
+          return min(max(d.x,max(d.y,d.z)),0.0) + length(max(d,0.0));
+        }
+
+        // A function to calculate the distance from a point to the scene
+        float sceneDistance(vec3 p) {
+          // Define some parameters for the scene objects
+          vec3 sphereCenter = vec3(0.0, 1.0, -5.0);
+          float sphereRadius = 1.0;
+          vec3 planeNormal = vec3(0.0, 1.0, 0.0);
+          float planeDistance = -1.0;
+          vec3 boxCenter = vec3(-2.0, 0.5, -4.0);
+          vec3 boxSize = vec3(1.0, 1.0, 1.0);
+
+          // Calculate the distance from the point to each object
+          float dSphere = sphereDistance(p, sphereCenter, sphereRadius);
+          float dPlane = planeDistance(p, planeNormal, planeDistance);
+          float dBox = boxDistance(p - boxCenter, boxSize);
+
+          // Return the minimum distance
+          return min(dSphere, min(dPlane, dBox));
+        }
+
+        // A function to calculate the normal vector at a point on the scene
+        vec3 sceneNormal(vec3 p) {
+          // Define a small offset value
+          float e = 0.001;
+
+          // Calculate the gradient of the scene distance function
+          vec3 n = vec3(
+            sceneDistance(p + vec3(e, 0.0, 0.0)) - sceneDistance(p - vec3(e, 0.0, 0.0)),
+            sceneDistance(p + vec3(0.0, e, 0.0)) - sceneDistance(p - vec3(0.0, e, 0.0)),
+            sceneDistance(p + vec3(0.0, 0.0, e)) - sceneDistance(p - vec3(0.0, 0.0, e))
+          );
+
+          // Normalize the gradient to get the normal vector
+          return normalize(n);
+        }
+
+        // A function to calculate the color of a point on the scene
+        vec3 sceneColor(vec3 p) {
+          // Define some parameters for the scene objects
+          vec3 sphereCenter = vec3(0.0, 1.0, -5.0);
+          float sphereRadius = 1.0;
+          vec3 planeNormal = vec3(0.0, 1.0, 0.0);
+          float planeDistance = -1.0;
+          vec3 boxCenter = vec3(-2.0, 0.5, -4.0);
+          vec3 boxSize = vec3(1.0, 1.0, 1.0);
+
+          // Define some colors for the scene objects
+          vec3 sphereColor = vec3(1.0, 0.0, 0.0); // red
+          vec3 planeColor = vec3(0.5, 0.5, 0.5); // gray
+          vec3 boxColor = vec3(0.0, 1.0, 1.0); // cyan
+
+          // Calculate the distance from the point to each object
+          float dSphere = sphereDistance(p, sphereCenter, sphereRadius);
+          float dPlane = planeDistance(p, planeNormal, planeDistance);
+          float dBox = boxDistance(p - boxCenter, boxSize);
+
+          // Return the color of the closest object
+          if (dSphere < dPlane && dSphere < dBox) {
+            return sphereColor;
+          } else if (dPlane < dSphere && dPlane < dBox) {
+            return planeColor;
+          } else {
+            return boxColor;
+          }
+        }
+
+        // A function to calculate the ray tracing color of a ray
+        vec3 rayTracingColor(vec3 ro, vec3 rd) {
+          // Define some parameters for the ray tracing algorithm
+          float maxDistance = 100.0; // the maximum distance to trace the ray
+          float minDistance = 0.01; // the minimum distance to consider a hit
+          int maxSteps = 64; // the maximum number of steps to trace the ray
+          int maxBounces = 4; // the maximum number of bounces to trace the ray
+
+          // Define some colors for the background and the ambient light
+          vec3 backgroundColor = vec3(0.2, 0.2, 0.8); // blue
+          vec3 ambientColor = vec3(0.1, 0.1, 0.1); // dark
+
+          // Initialize some variables for the ray tracing loop
+          float t = 0.0; // the current distance along the ray
+          int s = 0; // the current step of the ray tracing loop
+          int b = 0; // the current bounce of the ray tracing loop
+          bool hit = false; // whether the ray hit an object or not
+          vec3 c = backgroundColor; // the current color of the ray
+
+          // Loop until the ray hits an object or reaches the maximum distance or steps or bounces
+          while (!hit && t < maxDistance && s < maxSteps && b < maxBounces) {
+            // Calculate the current position of the ray
+            vec3 p = ro + t * rd;
+
+            // Calculate the distance from the position to the scene
+            float d = sceneDistance(p);
+
+            // Check if the distance is below the minimum distance
+            if (d < minDistance) {
+              // The ray hit an object
+              hit = true;
+
+              // Calculate the normal vector at the hit point
+              vec3 n = sceneNormal(p);
+
+              // Calculate the color of the hit point
+              c = sceneColor(p);
+
+              // Add some ambient light to the color
+              c += ambientColor;
+
+              // TODO: Add some shading and reflection effects to the color
+
+            } else {
+              // The ray did not hit an object yet
+
+              // Advance the distance along the ray by the scene distance
+              t += d;
+
+              // Increment the step counter
+              s++;
+            }
+          }
+
+          // Return the final color of the ray
+          return c;
+        }
+
+        void main() {
+          // Calculate the normalized device coordinates from pixel coordinates
+          vec2 ndc = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
+
+          // Calculate the ray origin and direction from the camera parameters
+          vec3 ro = cameraPosition;
+          vec3 rd = normalize(cameraDirection + ndc.x * cross(cameraDirection, vec3(0.0, 1.0, 0.0)) + ndc.y * vec3(0.0, 1.0, 0.0));
+
+          // Calculate the ray tracing color of the ray
+          vec3 col = rayTracingColor(ro, rd);
+
+          // Output the color to the screen
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    });
+
+    // Create a full-screen quad to render the ray tracing shader
+    var quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), rayTracingMaterial);
+    scene.add(quad);
+
+    // Create a clock to keep track of time
+    var clock = new THREE.Clock();
+
+    // Create a function to animate the scene
+    function animate() {
+      // Request the next animation frame
+      requestAnimationFrame(animate);
+
+      // Update the time uniform of the ray tracing material
+      rayTracingMaterial.uniforms.time.value = clock.getElapsedTime();
+
+      // Update the camera position and direction uniforms of the ray tracing material
+      rayTracingMaterial.uniforms.cameraPosition.value = camera.position;
+      rayTracingMaterial.uniforms.cameraDirection.value = camera.getWorldDirection(new THREE.Vector3());
+
+      // Render the scene
+      renderer.render(scene, camera);
+    }
+
+    // Start the animation loop
+    animate();
+
+    // Create a function to handle window resize events
+    function onWindowResize() {
+      // Update the camera aspect ratio and projection matrix
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+
+      // Update the renderer size
+      renderer.setSize(window.innerWidth, window.innerHeight);
+
+      // Update the resolution uniform of the ray tracing material
+      rayTracingMaterial.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+    }
+
+    // Add an event listener for window resize events
+    window.addEventListener('resize', onWindowResize);
+
+    // Create some variables to store the keyboard state and the movement speed
+    var keys = {};
+    var speed = 0.1;
+
+    // Create a function to handle key down events
+    function onKeyDown(event) {
+      // Store the key code in the keys object
+      keys[event.keyCode] = true;
+    }
+
+    // Create a function to handle key up events
+    function onKeyUp(event) {
+      // Delete the key code from the keys object
+      delete keys[event.keyCode];
+    }
+
+    // Add event listeners for key down and key up events
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+
+    // Create a function to update the camera position based on the keyboard input
+    function updateCamera() {
+      // Check if the W key is pressed
+      if (keys[87]) {
+        // Move the camera forward along its direction vector
+        camera.position.add(camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(speed));
+      }
+
+      // Check if the S key is pressed
+      if (keys[83]) {
+        // Move the camera backward along its direction vector
+        camera.position.sub(camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(speed));
+      }
+
+      // Check if the A key is pressed
+      if (keys[65]) {
+        // Rotate the camera left around the y-axis
+        camera.rotation.y += speed;
+      }
+
+      // Check if the D key is pressed
+      if (keys[68]) {
+        // Rotate the camera right around the y-axis
+        camera.rotation.y -= speed;  }
+    }
+
+    // Create a function to update the scene
+    function update() {
+      // Update the camera position based on the keyboard input
+      updateCamera();
+
+      // Request the next update
+      requestAnimationFrame(update);
+    }
+
+    // Start the update loop
+    update();
+  </script>
+
+</body></html>
